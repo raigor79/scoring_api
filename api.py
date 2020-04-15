@@ -39,16 +39,21 @@ GENDERS = {
 }
 
 
+def _get_score(store=0, phone=None, email=None, birthday=None,
+               gender=None, first_name=None, last_name=None):
+    return get_score(store, phone, email, birthday, gender, first_name, last_name)
+
+
+def _get_interests(store=0, cid=0):
+    return get_interests(store, cid)
+
+
 class Field(object):
     def __get__(self, instance, owner):
         return self._value.get(instance, self._value)
 
     def __set__(self, instance, value):
-        if value is None and self.required:
-            raise ValueError('Require must be required')
-        if value in (None, {}, [], (), '') and self.nullable:
-            print('Require must be not empty')
-            raise ValueError('Require must be not empty')
+        self.valid_required_nullable(value)
         self._value[instance] = value
         self.valid_field(value)
 
@@ -56,6 +61,12 @@ class Field(object):
         self.required = required
         self.nullable = nullable
         self._value = WeakKeyDictionary()
+
+    def valid_required_nullable(self, value):
+        if value is None and self.required:
+            raise ValueError('Require must be required')
+        if value in (None, {}, [], (), '') and not self.nullable:
+            raise ValueError('Require must be not empty')
 
     def valid_field(self, value):
         pass
@@ -135,13 +146,34 @@ class MetaClassRequest(type):
 
 
 class Request(metaclass=MetaClassRequest):
-    def __init__(self, request):
-        self.request = {} if not request else request
+    def __init__(self, request={}):
+        self.list_not_null_fields = []
+        self.dict_err_type_value = {}
+        for name_field, val_field in getattr(self, '__inst_cls').items():
+            try:
+                value = request[name_field]
+                val_field.valid_required_nullable(value)
+                val_field.valid_field(value)
+                setattr(self, name_field, value)
+                self.list_not_null_fields.append(name_field)
+            except (TypeError, ValueError) as err:
+                self.dict_err_type_value[name_field] = err
 
 
 class ClientsInterestsRequest(Request):
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
+
+    def get_operation(self, _store, list_par, context):
+        col_clients = 0
+        answer_get_interests = {}
+        for client in getattr(self, 'client_ids'):
+            _args = {'store': _store}
+            _args['client_ids'] = client
+            col_clients +=1
+            answer_get_interests[str(client)] = _get_interests(*_args)
+        context["nclients"] = col_clients
+        return answer_get_interests
 
 
 class OnlineScoreRequest(Request):
@@ -151,6 +183,26 @@ class OnlineScoreRequest(Request):
     phone = PhoneField(required=False, nullable=True)
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
+
+    def validated_argument(self):
+        if self.dict_err_type_value:
+            if 'phone' and 'email' in self.list_not_null_fields:
+                return True
+            if 'first_name' and 'last_name' in self.list_not_null_fields:
+                return True
+            if 'gender' and 'birthday' in self.list_not_null_fields:
+                return True
+            else:
+                self.dict_err_type_value['arguments'] = 'Arguments are not valid'
+
+    def get_operation(self, _store, list_par, context):
+        _args = {'store': _store}
+        _list_par = list_par[:]
+        for val in _list_par:
+            if getattr(self, val) not in (None, {}, [], (), ''):
+                _args[val] = getattr(self, val)
+        context['has'] = list_par
+        return {'score': _get_score(*_args)}
 
 
 class MethodRequest(Request):
@@ -167,9 +219,10 @@ class MethodRequest(Request):
 
 def check_auth(request):
     if request.is_admin:
-        digest = hashlib.sha512(datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).hexdigest()
+        digest = hashlib.sha512(
+            bytes(datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT, encoding='utf-8')).hexdigest()
     else:
-        digest = hashlib.sha512(request.account + request.login + SALT).hexdigest()
+        digest = hashlib.sha512(bytes(request.account + request.login + SALT, encoding='utf-8')).hexdigest()
     if digest == request.token:
         return True
     return False
@@ -178,13 +231,20 @@ def check_auth(request):
 def method_handler(request, ctx, store):
     response, code = None, None
     handler = {
-        "online_score": 'OnlineScoreRequest',
-        "clients_interests": 'ClientsInterestsRequest'
+        "online_score": OnlineScoreRequest,
+        "clients_interests": ClientsInterestsRequest
     }
-
-    code = 404
-
-    return response, code
+    _request = MethodRequest(request['body'])
+    if _request.dict_err_type_value:
+        return {"code": BAD_REQUEST, "error": ERRORS[BAD_REQUEST]}
+    if check_auth(_request):
+        _arguments = handler[_request.method](request['body']['arguments'])
+        if _request.is_admin:
+            return {'score': 42}, OK
+        else:
+            return _arguments.get_operation(store, _arguments.list_not_null_fields, ctx), OK
+    else:
+        return ERRORS[FORBIDDEN], FORBIDDEN
 
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
@@ -199,34 +259,23 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         response, code = {}, OK
         context = {"request_id": self.get_request_id(self.headers)}
-        print('headers is ', (self.headers.__hash__()))
-        print(self.headers)
-
-        print('My print', context)
         request = None
         try:
             data_string = self.rfile.read(int(self.headers['Content-Length']))
-            print(data_string)
             request = json.loads(data_string)
-            print(request)
         except:
             code = BAD_REQUEST
-
         if request:
             path = self.path.strip("/")
             logging.info("%s: %s %s" % (self.path, data_string, context["request_id"]))
             if path in self.router:
                 try:
-
                     response, code = self.router[path]({"body": request, "headers": self.headers}, context, self.store)
-
-
                 except Exception as e:
                     logging.exception("Unexpected error: %s" % e)
                     code = INTERNAL_ERROR
             else:
                 code = NOT_FOUND
-
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
@@ -234,12 +283,9 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
             r = {"response": response, "code": code}
         else:
             r = {"error": response or ERRORS.get(code, "Unknown Error"), "code": code}
-
         context.update(r)
         logging.info(context)
-        print("---TEST---", context)
         self.wfile.write(json.dumps(r, ensure_ascii=False).encode("utf-8"))
-
         return
 
 
