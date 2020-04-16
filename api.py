@@ -95,8 +95,8 @@ class PhoneField(Field):
     def valid_field(self, value):
         if not isinstance(value, (str, int)):
             raise TypeError('This value must be a number or str')
-        if not str(value).startswith('7') and len(str(value)) != 11:
-            raise ValueError('Length phone number must be 11 characters and begin with "7"')
+        if not str(value).startswith('7') or len(str(value)) != 11:
+            raise SyntaxError('Length phone number must be 11 characters and begin with "7"')
 
 
 class DateField(CharField):
@@ -105,7 +105,7 @@ class DateField(CharField):
         try:
             self._date = datetime.datetime.strptime(value, '%d.%m.%Y').date()
         except:
-            raise ValueError('Date must be string in format "DD.MM.YYYY"')
+            raise TypeError('Date must be string in format "DD.MM.YYYY"')
 
 
 class BirthDayField(DateField):
@@ -118,7 +118,7 @@ class BirthDayField(DateField):
                                                           datetime.date.today().month,
                                                           datetime.date.today().day)
         if _date_from_day.days > _date_max.days:
-            raise ValueError('More than 70 years have passed since the date of birth')
+            raise SyntaxError('More than 70 years have passed since the date of birth')
 
 
 class GenderField(Field):
@@ -133,7 +133,7 @@ class ClientIDsField(Field):
             raise TypeError('His field must be a list')
         if not all(isinstance(number, int) for number in value):
             raise TypeError('His list must contain integer')
-        if not all(number > 0 for number in value):
+        if not all(number >= 0 for number in value):
             raise ValueError('His list must contain positive integer')
 
 
@@ -151,13 +151,20 @@ class Request(metaclass=MetaClassRequest):
         self.dict_err_type_value = {}
         for name_field, val_field in getattr(self, '__inst_cls').items():
             try:
-                value = request[name_field]
+                if name_field in request:
+                    value = request[name_field]
+                else:
+                    raise ValueError('Empty value %s', name_field)
                 val_field.valid_required_nullable(value)
                 val_field.valid_field(value)
                 setattr(self, name_field, value)
                 self.list_not_null_fields.append(name_field)
-            except (TypeError, ValueError) as err:
+
+            except (TypeError, SyntaxError) as err:
                 self.dict_err_type_value[name_field] = err
+            except ValueError as err:
+                if getattr(val_field, 'required'):
+                    self.dict_err_type_value[name_field] = err
 
 
 class ClientsInterestsRequest(Request):
@@ -167,13 +174,18 @@ class ClientsInterestsRequest(Request):
     def get_operation(self, _store, list_par, context):
         col_clients = 0
         answer_get_interests = {}
-        for client in getattr(self, 'client_ids'):
-            _args = {'store': _store}
-            _args['client_ids'] = client
-            col_clients +=1
-            answer_get_interests[str(client)] = _get_interests(*_args)
-        context["nclients"] = col_clients
-        return answer_get_interests
+        if "client_ids" in list_par:
+            for client in getattr(self, 'client_ids'):
+                _args = {'store': _store}
+                _args['client_ids'] = client
+                col_clients +=1
+                answer_get_interests[str(client)] = _get_interests(*_args)
+            context["nclients"] = col_clients
+        else:
+            self.dict_err_type_value['client_ids'] = \
+                ValueError('"client_ids" should not be dusty ')
+            return ERRORS[INVALID_REQUEST], INVALID_REQUEST
+        return answer_get_interests, OK
 
 
 class OnlineScoreRequest(Request):
@@ -184,25 +196,31 @@ class OnlineScoreRequest(Request):
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
 
-    def validated_argument(self):
-        if self.dict_err_type_value:
-            if 'phone' and 'email' in self.list_not_null_fields:
+    def validated_argument(self, list_not_null_fields):
+        if not self.dict_err_type_value:
+            if 'phone' in list_not_null_fields and \
+                    'email' in list_not_null_fields:
                 return True
-            if 'first_name' and 'last_name' in self.list_not_null_fields:
+            if 'first_name' in list_not_null_fields and \
+                    'last_name' in list_not_null_fields:
                 return True
-            if 'gender' and 'birthday' in self.list_not_null_fields:
+            if 'gender' in list_not_null_fields and \
+                    'birthday' in list_not_null_fields:
                 return True
-            else:
-                self.dict_err_type_value['arguments'] = 'Arguments are not valid'
+        self.dict_err_type_value['arguments'] = 'Arguments are not valid'
+        return False
 
     def get_operation(self, _store, list_par, context):
-        _args = {'store': _store}
-        _list_par = list_par[:]
-        for val in _list_par:
-            if getattr(self, val) not in (None, {}, [], (), ''):
-                _args[val] = getattr(self, val)
-        context['has'] = list_par
-        return {'score': _get_score(*_args)}
+        if not self.validated_argument(list_par):
+            return ERRORS[INVALID_REQUEST], INVALID_REQUEST
+        else:
+            _args = {'store': _store}
+            _list_par = list_par[:]
+            for val in _list_par:
+                if getattr(self, val) not in (None, {}, [], (), ''):
+                    _args[val] = getattr(self, val)
+            context['has'] = list_par
+            return {'score': _get_score(*_args)}, OK
 
 
 class MethodRequest(Request):
@@ -236,13 +254,15 @@ def method_handler(request, ctx, store):
     }
     _request = MethodRequest(request['body'])
     if _request.dict_err_type_value:
-        return {"code": BAD_REQUEST, "error": ERRORS[BAD_REQUEST]}
+        return ERRORS[INVALID_REQUEST], INVALID_REQUEST
     if check_auth(_request):
         _arguments = handler[_request.method](request['body']['arguments'])
+        if _arguments.dict_err_type_value:
+            return ERRORS[INVALID_REQUEST], INVALID_REQUEST
         if _request.is_admin:
             return {'score': 42}, OK
         else:
-            return _arguments.get_operation(store, _arguments.list_not_null_fields, ctx), OK
+            return _arguments.get_operation(store, _arguments.list_not_null_fields, ctx)
     else:
         return ERRORS[FORBIDDEN], FORBIDDEN
 
