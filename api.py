@@ -184,7 +184,6 @@ class ClientsInterestsRequest(Request):
                 col_clients +=1
                 answer_get_interests[str(client)] = _get_interests(*_args)
             context["nclients"] = col_clients
-            logger.debug('Write contex[nclients] %s', context["nclients"])
         else:
             self.dict_err_type_value['client_ids'] = \
                 ValueError('"client_ids" should not be dusty ')
@@ -224,7 +223,6 @@ class OnlineScoreRequest(Request):
                 if getattr(self, val) not in (None, {}, [], (), ''):
                     _args[val] = getattr(self, val)
             context['has'] = list_par
-            logger.debug('Write contex[has] %s', context['has'])
             return {'score': _get_score(*_args)}, OK
 
 
