@@ -40,7 +40,7 @@ GENDERS = {
     FEMALE: "female",
 }
 
-DEFAULT_CONFIG_FILE_NAME = 'scoring_api.cfg'
+DEFAULT_CONFIG_FILE_NAME = 'score_api.cfg'
 
 def _get_score(store=0, phone=None, email=None, birthday=None,
                gender=None, first_name=None, last_name=None):
@@ -319,9 +319,8 @@ if __name__ == "__main__":
     op.add_option("-c", "--config",
                   action="store",
                   help="file config must are *.cfg",
-                  default='score_api.cfg')
+                  default=DEFAULT_CONFIG_FILE_NAME)
     (opts, args) = op.parse_args()
-
     try:
         logging.config.fileConfig(opts.config)
         logger = logging.getLogger('info')
