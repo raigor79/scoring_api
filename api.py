@@ -5,9 +5,11 @@ import abc
 import json
 import datetime
 import logging
+import logging.config
 import hashlib
 import uuid
 import os
+import sys
 from scoring import get_score, get_interests
 from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -38,6 +40,7 @@ GENDERS = {
     FEMALE: "female",
 }
 
+DEFAULT_CONFIG_FILE_NAME = 'scoring_api.cfg'
 
 def _get_score(store=0, phone=None, email=None, birthday=None,
                gender=None, first_name=None, last_name=None):
@@ -181,6 +184,7 @@ class ClientsInterestsRequest(Request):
                 col_clients +=1
                 answer_get_interests[str(client)] = _get_interests(*_args)
             context["nclients"] = col_clients
+            logger.debug('Write contex[nclients] %s', context["nclients"])
         else:
             self.dict_err_type_value['client_ids'] = \
                 ValueError('"client_ids" should not be dusty ')
@@ -220,6 +224,7 @@ class OnlineScoreRequest(Request):
                 if getattr(self, val) not in (None, {}, [], (), ''):
                     _args[val] = getattr(self, val)
             context['has'] = list_par
+            logger.debug('Write contex[has] %s', context['has'])
             return {'score': _get_score(*_args)}, OK
 
 
@@ -287,12 +292,12 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
             code = BAD_REQUEST
         if request:
             path = self.path.strip("/")
-            logging.info("%s: %s %s" % (self.path, data_string, context["request_id"]))
+            logger.info("%s: %s %s" % (self.path, data_string, context["request_id"]))
             if path in self.router:
                 try:
                     response, code = self.router[path]({"body": request, "headers": self.headers}, context, self.store)
                 except Exception as e:
-                    logging.exception("Unexpected error: %s" % e)
+                    logger.exception("Unexpected error: %s" % e)
                     code = INTERNAL_ERROR
             else:
                 code = NOT_FOUND
@@ -304,7 +309,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
         else:
             r = {"error": response or ERRORS.get(code, "Unknown Error"), "code": code}
         context.update(r)
-        logging.info(context)
+        logger.info(context)
         self.wfile.write(json.dumps(r, ensure_ascii=False).encode("utf-8"))
         return
 
@@ -313,13 +318,25 @@ if __name__ == "__main__":
     op = OptionParser()
     op.add_option("-p", "--port", action="store", type=int, default=8080)
     op.add_option("-l", "--log", action="store", default=None)
+    op.add_option("-c", "--config",
+                  action="store",
+                  help="file config must are *.cfg",
+                  default='score_api.cfg')
     (opts, args) = op.parse_args()
-    logging.basicConfig(filename=opts.log, level=logging.INFO,
+
+    try:
+        logging.config.fileConfig(opts.config)
+        logger = logging.getLogger('info')
+    except:
+        logger = logging.basicConfig(filename=opts.log, level=logging.INFO,
                         format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
     server = HTTPServer(("localhost", opts.port), MainHTTPHandler)
-    logging.info("Starting server at %s" % opts.port)
+    logger.info("Starting server at %s" % opts.port)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        pass
+        logger.info('Script the script was interrupted by clicking Ctrl+C')
+    except Exception as err:
+        logger.exception(err)
     server.server_close()
+
