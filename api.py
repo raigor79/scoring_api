@@ -1,19 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import abc
 import json
 import datetime
-import logging
 import logging.config
 import hashlib
 import uuid
-import os
-import sys
 from scoring import get_score, get_interests
 from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from weakref import WeakKeyDictionary
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -39,8 +34,8 @@ GENDERS = {
     MALE: "male",
     FEMALE: "female",
 }
-
 DEFAULT_CONFIG_FILE_NAME = 'score_api.cfg'
+
 
 def _get_score(store=0, phone=None, email=None, birthday=None,
                gender=None, first_name=None, last_name=None):
@@ -51,19 +46,24 @@ def _get_interests(store=0, cid=0):
     return get_interests(store, cid)
 
 
+class ValidationError(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+
+
 class Field(object):
     def __get__(self, instance, owner):
-        return self._value.get(instance, self._value)
+        return self._value
 
     def __set__(self, instance, value):
         self.valid_required_nullable(value)
-        self._value[instance] = value
         self.valid_field(value)
+        self._value = value
 
     def __init__(self, required=False, nullable=False):
         self.required = required
         self.nullable = nullable
-        self._value = WeakKeyDictionary()
+        self._value = None
 
     def valid_required_nullable(self, value):
         if value is None and self.required:
@@ -78,64 +78,64 @@ class Field(object):
 class CharField(Field):
     def valid_field(self, value):
         if not isinstance(value, str):
-            raise TypeError('This value must be a string')
+            raise ValidationError('This value must be a string')
 
 
 class ArgumentsField(Field):
     def valid_field(self, value):
         if not isinstance(value, dict):
-            raise TypeError('This value must be a dict')
+            raise ValidationError('This value must be a dict')
 
 
 class EmailField(CharField):
     def valid_field(self, value):
         super().valid_field(value)
         if '@' not in value:
-            raise TypeError('This value must be a email')
+            raise ValidationError('This value must be a email')
 
 
 class PhoneField(Field):
     def valid_field(self, value):
         if not isinstance(value, (str, int)):
-            raise TypeError('This value must be a number or str')
+            raise ValidationError('This value must be a number or str')
         if not str(value).startswith('7') or len(str(value)) != 11:
-            raise SyntaxError('Length phone number must be 11 characters and begin with "7"')
+            raise ValidationError('Length phone number must be 11 characters and begin with "7"')
 
 
 class DateField(CharField):
     def valid_field(self, value):
         super().valid_field(value)
         try:
-            self._date = datetime.datetime.strptime(value, '%d.%m.%Y').date()
+            self.date = datetime.datetime.strptime(value, '%d.%m.%Y').date()
         except:
-            raise TypeError('Date must be string in format "DD.MM.YYYY"')
+            raise ValidationError('Date must be string in format "DD.MM.YYYY"')
 
 
 class BirthDayField(DateField):
     def valid_field(self, value):
         super().valid_field(value)
-        _date_from_day = datetime.date.today() - self._date
-        if _date_from_day.days < 0:
+        date_from_day = datetime.date.today() - self.date
+        if date_from_day.days < 0:
             raise ValueError('Date does not exist yet')
         _date_max = datetime.date.today() - datetime.date(datetime.date.today().year - 70,
                                                           datetime.date.today().month,
                                                           datetime.date.today().day)
-        if _date_from_day.days > _date_max.days:
-            raise SyntaxError('More than 70 years have passed since the date of birth')
+        if date_from_day.days > _date_max.days:
+            raise ValidationError('More than 70 years have passed since the date of birth')
 
 
 class GenderField(Field):
     def valid_field(self, value):
         if value not in GENDERS.keys():
-            raise TypeError('His field must be a integer number with the value 0, 1 or 2')
+            raise ValidationError('His field must be a integer number with the value 0, 1 or 2')
 
 
 class ClientIDsField(Field):
     def valid_field(self, value):
         if not isinstance(value, list):
-            raise TypeError('His field must be a list')
+            raise ValidationError('His field must be a list')
         if not all(isinstance(number, int) for number in value):
-            raise TypeError('His list must contain integer')
+            raise ValidationError('His list must contain integer')
         if not all(number >= 0 for number in value):
             raise ValueError('His list must contain positive integer')
 
@@ -162,33 +162,16 @@ class Request(metaclass=MetaClassRequest):
                 val_field.valid_field(value)
                 setattr(self, name_field, value)
                 self.list_not_null_fields.append(name_field)
-
-            except (TypeError, SyntaxError) as err:
-                self.dict_err_type_value[name_field] = err
+            except ValidationError as err:
+                self.dict_err_type_value[name_field] = err.args[0]
             except ValueError as err:
                 if getattr(val_field, 'required'):
-                    self.dict_err_type_value[name_field] = err
+                    self.dict_err_type_value[name_field] = err.args[0]
 
 
 class ClientsInterestsRequest(Request):
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
-
-    def get_operation(self, _store, list_par, context):
-        col_clients = 0
-        answer_get_interests = {}
-        if "client_ids" in list_par:
-            for client in getattr(self, 'client_ids'):
-                _args = {'store': _store}
-                _args['client_ids'] = client
-                col_clients +=1
-                answer_get_interests[str(client)] = _get_interests(*_args)
-            context["nclients"] = col_clients
-        else:
-            self.dict_err_type_value['client_ids'] = \
-                ValueError('"client_ids" should not be dusty ')
-            return ERRORS[INVALID_REQUEST], INVALID_REQUEST
-        return answer_get_interests, OK
 
 
 class OnlineScoreRequest(Request):
@@ -212,18 +195,6 @@ class OnlineScoreRequest(Request):
                 return True
         self.dict_err_type_value['arguments'] = 'Arguments are not valid'
         return False
-
-    def get_operation(self, _store, list_par, context):
-        if not self.validated_argument(list_par):
-            return ERRORS[INVALID_REQUEST], INVALID_REQUEST
-        else:
-            _args = {'store': _store}
-            _list_par = list_par[:]
-            for val in _list_par:
-                if getattr(self, val) not in (None, {}, [], (), ''):
-                    _args[val] = getattr(self, val)
-            context['has'] = list_par
-            return {'score': _get_score(*_args)}, OK
 
 
 class MethodRequest(Request):
@@ -249,23 +220,58 @@ def check_auth(request):
     return False
 
 
+def online_score_request(store, request, context):
+    score_request = OnlineScoreRequest(request)
+    if score_request.dict_err_type_value:
+        return score_request.dict_err_type_value, INVALID_REQUEST
+    list_par = score_request.list_not_null_fields
+    if not score_request.validated_argument(list_par):
+        return score_request.dict_err_type_value, INVALID_REQUEST
+    else:
+        args = {'store': store}
+        _list_par = list_par[:]
+        for val in _list_par:
+            if getattr(score_request, val) not in (None, {}, [], (), ''):
+                args[val] = getattr(score_request, val)
+        context['has'] = list_par
+        return {'score': _get_score(*args)}, OK
+
+
+def clients_interests_request(store, request, context):
+    interest_request = ClientsInterestsRequest(request)
+    if interest_request.dict_err_type_value:
+        return interest_request.dict_err_type_value, INVALID_REQUEST
+    list_par = interest_request.list_not_null_fields
+    col_clients = 0
+    answer_get_interests = {}
+    if "client_ids" in list_par:
+        for client in getattr(interest_request, 'client_ids'):
+            args = {'store': store}
+            args['client_ids'] = client
+            col_clients += 1
+            answer_get_interests[str(client)] = _get_interests(*args)
+        context["nclients"] = col_clients
+    else:
+        interest_request.dict_err_type_value['client_ids'] = \
+            ValueError('"client_ids" should not be dusty ').args[0]
+        return interest_request.dict_err_type_value, INVALID_REQUEST
+    return answer_get_interests, OK
+
+
 def method_handler(request, ctx, store):
     response, code = None, None
     handler = {
-        "online_score": OnlineScoreRequest,
-        "clients_interests": ClientsInterestsRequest
+        "online_score": online_score_request,
+        "clients_interests": clients_interests_request
     }
-    _request = MethodRequest(request['body'])
-    if _request.dict_err_type_value:
-        return ERRORS[INVALID_REQUEST], INVALID_REQUEST
-    if check_auth(_request):
-        _arguments = handler[_request.method](request['body']['arguments'])
-        if _arguments.dict_err_type_value:
-            return ERRORS[INVALID_REQUEST], INVALID_REQUEST
-        if _request.is_admin:
+    request_body = MethodRequest(request['body'])
+    if request_body.dict_err_type_value:
+        return request_body.dict_err_type_value, INVALID_REQUEST
+    if check_auth(request_body):
+        if request_body.is_admin:
             return {'score': 42}, OK
         else:
-            return _arguments.get_operation(store, _arguments.list_not_null_fields, ctx)
+            return handler[request_body.method](store, request['body']['arguments'], ctx)
     else:
         return ERRORS[FORBIDDEN], FORBIDDEN
 
