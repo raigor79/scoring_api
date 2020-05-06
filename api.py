@@ -9,6 +9,7 @@ import uuid
 from scoring import get_score, get_interests
 from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import store
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -37,28 +38,29 @@ GENDERS = {
 DEFAULT_CONFIG_FILE_NAME = 'score_api.cfg'
 
 
-def _get_score(store=0, phone=None, email=None, birthday=None,
+def _get_score(store=None, phone=None, email=None, birthday=None,
                gender=None, first_name=None, last_name=None):
     return get_score(store, phone, email, birthday, gender, first_name, last_name)
 
 
-def _get_interests(store=0, cid=0):
+def _get_interests(store=None, cid=None):
     return get_interests(store, cid)
 
 
-class ValidationError(Exception):
+class ValidationError(TypeError, SyntaxError):
     def __init__(self, message):
-        super().__init__(message)
+        pass
 
 
 class Field(object):
     def __get__(self, instance, owner):
-        return self._value
+        return instance.__dict__.get(getattr(self, '__value'),
+                                     self._value)
 
     def __set__(self, instance, value):
         self.valid_required_nullable(value)
         self.valid_field(value)
-        self._value = value
+        instance.__dict__[getattr(self, '__value')] = value
 
     def __init__(self, required=False, nullable=False):
         self.required = required
@@ -234,7 +236,7 @@ def online_score_request(store, request, context):
             if getattr(score_request, val) not in (None, {}, [], (), ''):
                 args[val] = getattr(score_request, val)
         context['has'] = list_par
-        return {'score': _get_score(*args)}, OK
+        return {'score': _get_score(**args)}, OK
 
 
 def clients_interests_request(store, request, context):
@@ -245,12 +247,12 @@ def clients_interests_request(store, request, context):
     col_clients = 0
     answer_get_interests = {}
     if "client_ids" in list_par:
-        for client in getattr(interest_request, 'client_ids'):
+         for client in getattr(interest_request, 'client_ids'):
             args = {'store': store}
-            args['client_ids'] = client
+            args['cid'] = str(client)
             col_clients += 1
-            answer_get_interests[str(client)] = _get_interests(*args)
-        context["nclients"] = col_clients
+            answer_get_interests[client] = _get_interests(**args)
+         context["nclients"] = col_clients
     else:
         interest_request.dict_err_type_value['client_ids'] = \
             ValueError('"client_ids" should not be dusty ').args[0]
@@ -280,7 +282,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
     router = {
         "method": method_handler
     }
-    store = None
+    store = store.Store(store.WorksRedis(), attempt_request=5, delay=0.1, cache_size=5)
 
     def get_request_id(self, headers):
         return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)
@@ -329,7 +331,7 @@ if __name__ == "__main__":
     (opts, args) = op.parse_args()
     try:
         logging.config.fileConfig(opts.config)
-        logger = logging.getLogger('info')
+        logger = logging.getLogger('root')
     except:
         logger = logging.basicConfig(filename=opts.log, level=logging.INFO,
                         format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S')

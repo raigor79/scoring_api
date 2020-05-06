@@ -2,8 +2,10 @@ import hashlib
 import datetime
 import functools
 import unittest
+import random
 
 import api
+import store
 
 
 def cases(cases):
@@ -21,7 +23,7 @@ class TestSuite(unittest.TestCase):
     def setUp(self):
         self.context = {}
         self.headers = {}
-        self.settings = {}
+        self.settings = store.Store(store.WorksRedis(), attempt_request=5, delay=0.1, cache_size=5)
 
     def get_response(self, request):
         return api.method_handler({"body": request, "headers": self.headers}, self.context, self.settings)
