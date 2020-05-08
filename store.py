@@ -47,10 +47,13 @@ class Store:
         for attempt in range(self.attempt_request):
             try:
                 return self.store.get(key)
-            except (TimeoutError, ConnectionError):
-                time.sleep(attempt * self.delay)
+            except TimeoutError:
+                self.error = TimeoutError
+            except ConnectionError:
+                self.error = ConnectionError
+            time.sleep(attempt * self.delay)
         else:
-            raise TimeoutError
+            raise self.error
 
     def cache_set(self, key, value, expire):
         for attempt in range(self.attempt_request):
