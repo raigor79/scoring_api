@@ -1,27 +1,9 @@
 import hashlib
 import datetime
-import functools
 import unittest
 import api
 import store
-
-
-def cases(cases, count={}):
-    def decorator(f):
-        @functools.wraps(f)
-        def wrapper(*args):
-            for c in cases:
-                try:
-                    new_args = args + (c if isinstance(c, tuple) else (c,))
-                    f(*new_args)
-                except Exception as er:
-                    count[f.__name__] = c.__repr__()
-                    print('{}. function failure {}  at value {}'.format(len(count),
-                                                                        f.__name__,
-                                                                        count[f.__name__]))
-                    raise er
-        return wrapper
-    return decorator
+from libtools import cases
 
 
 class TestSuite(unittest.TestCase):
