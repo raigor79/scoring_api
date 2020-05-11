@@ -1,11 +1,6 @@
 import hashlib
 import json
-import random
 
-
-def interest():
-    interests = ["cars", "pets", "travel", "hi-tech", "sport", "music", "books", "tv", "cinema", "geek", "otus"]
-    return random.sample(interests, 2)
 
 def get_score(store, phone, email, birthday=None, gender=None, first_name=None, last_name=None):
     key_parts = [
@@ -34,7 +29,6 @@ def get_score(store, phone, email, birthday=None, gender=None, first_name=None, 
 
 
 def get_interests(store, cid):
-    store.cache_set("i:%s" % cid, json.dumps(interest()), 10)
     r = store.get("i:%s" % cid)
     return json.loads(r) if r else []
 

@@ -3,7 +3,9 @@ import datetime
 import unittest
 import api
 import store
+import json
 from libtools import cases
+from libtools import interest
 
 
 class TestSuite(unittest.TestCase):
@@ -11,6 +13,8 @@ class TestSuite(unittest.TestCase):
         self.context = {}
         self.headers = {}
         self.settings = store.Store(store.WorksRedis(), attempt_request=5, delay=0.1, cache_size=5)
+        for cid in [0, 1, 2, 3]:
+            self.settings.cache_set("i:%s" % cid, json.dumps(interest()), 100)
 
     def get_response(self, request):
         return api.method_handler({"body": request, "headers": self.headers}, self.context, self.settings)

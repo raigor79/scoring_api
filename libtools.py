@@ -1,4 +1,10 @@
 import functools
+import random
+
+
+def interest():
+    interests = ["cars", "pets", "travel", "hi-tech", "sport", "music", "books", "tv", "cinema", "geek", "otus"]
+    return random.sample(interests, 2)
 
 
 def cases(cases, count={}):
