@@ -47,31 +47,32 @@ def _get_interests(store=None, cid=None):
     return get_interests(store, cid)
 
 
-class ValidationError(TypeError, SyntaxError):
-    def __init__(self, message):
-        pass
+class ValidationError(Exception):
+    pass
 
 
 class Field(object):
     def __get__(self, instance, owner):
-        return instance.__dict__.get(getattr(self, '__value'),
-                                     self._value)
+        return instance.__dict__[self.name]
 
     def __set__(self, instance, value):
         self.valid_required_nullable(value)
         self.valid_field(value)
-        instance.__dict__[getattr(self, '__value')] = value
+        instance.__dict__[self.name] = value
+
+    def __set_name__(self, owner, name):
+        self.name = name
 
     def __init__(self, required=False, nullable=False):
         self.required = required
         self.nullable = nullable
-        self._value = None
+        self.value = None
 
     def valid_required_nullable(self, value):
         if value is None and self.required:
-            raise ValueError('Require must be required')
+            raise ValidationError('Require must be required')
         if value in (None, {}, [], (), '') and not self.nullable:
-            raise ValueError('Require must be not empty')
+            raise ValidationError('Require must be not empty')
 
     def valid_field(self, value):
         pass
@@ -118,7 +119,7 @@ class BirthDayField(DateField):
         super().valid_field(value)
         date_from_day = datetime.date.today() - self.date
         if date_from_day.days < 0:
-            raise ValueError('Date does not exist yet')
+            raise ValidationError('Date does not exist yet')
         _date_max = datetime.date.today() - datetime.date(datetime.date.today().year - 70,
                                                           datetime.date.today().month,
                                                           datetime.date.today().day)
@@ -139,7 +140,7 @@ class ClientIDsField(Field):
         if not all(isinstance(number, int) for number in value):
             raise ValidationError('His list must contain integer')
         if not all(number >= 0 for number in value):
-            raise ValueError('His list must contain positive integer')
+            raise ValidationError('His list must contain positive integer')
 
 
 class MetaClassRequest(type):
@@ -151,23 +152,28 @@ class MetaClassRequest(type):
 
 
 class Request(metaclass=MetaClassRequest):
-    def __init__(self, request={}):
+    def __init__(self, request=None):
         self.list_not_null_fields = []
         self.dict_err_type_value = {}
-        for name_field, val_field in getattr(self, '__inst_cls').items():
-            try:
-                if name_field in request:
-                    value = request[name_field]
-                else:
-                    raise ValueError('Empty value %s', name_field)
-                val_field.valid_required_nullable(value)
-                val_field.valid_field(value)
-                setattr(self, name_field, value)
-                self.list_not_null_fields.append(name_field)
-            except ValidationError as err:
-                self.dict_err_type_value[name_field] = err.args[0]
-            except ValueError as err:
-                if getattr(val_field, 'required'):
+        self.request = request if request else {}
+        for name_field in getattr(self, '__inst_cls').keys():
+            self.request[name_field] = request[name_field] if name_field in self.request else None
+            setattr(self, name_field,  self.request[name_field])
+
+    def validated_argument(self):
+        if all(val is None for val in self.request.values()):
+            self.dict_err_type_value["request"] = 'Request empty'
+        else:
+            for name_field, val_field in self.request.items():
+                try:
+                    getattr(self, '__inst_cls')[name_field].valid_required_nullable(val_field)
+                    try:
+                        getattr(self, '__inst_cls')[name_field].valid_field(val_field)
+                        self.list_not_null_fields.append(name_field)
+                    except ValidationError as err:
+                        if val_field not in (None, {}, [], (), ''):
+                            raise ValidationError(err.args[0])
+                except ValidationError as err:
                     self.dict_err_type_value[name_field] = err.args[0]
 
 
@@ -184,16 +190,17 @@ class OnlineScoreRequest(Request):
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
 
-    def validated_argument(self, list_not_null_fields):
+    def validated_argument(self):
+        super().validated_argument()
         if not self.dict_err_type_value:
-            if 'phone' in list_not_null_fields and \
-                    'email' in list_not_null_fields:
+            if 'phone' in self.list_not_null_fields and \
+                    'email' in self.list_not_null_fields:
                 return True
-            if 'first_name' in list_not_null_fields and \
-                    'last_name' in list_not_null_fields:
+            if 'first_name' in self.list_not_null_fields and \
+                    'last_name' in self.list_not_null_fields:
                 return True
-            if 'gender' in list_not_null_fields and \
-                    'birthday' in list_not_null_fields:
+            if 'gender' in self.list_not_null_fields and \
+                    'birthday' in self.list_not_null_fields:
                 return True
         self.dict_err_type_value['arguments'] = 'Arguments are not valid'
         return False
@@ -224,23 +231,22 @@ def check_auth(request):
 
 def online_score_request(store, request, context):
     score_request = OnlineScoreRequest(request)
-    if score_request.dict_err_type_value:
-        return score_request.dict_err_type_value, INVALID_REQUEST
-    list_par = score_request.list_not_null_fields
-    if not score_request.validated_argument(list_par):
+    if not score_request.validated_argument():
         return score_request.dict_err_type_value, INVALID_REQUEST
     else:
+        list_par = score_request.list_not_null_fields
         args = {'store': store}
         _list_par = list_par[:]
         for val in _list_par:
             if getattr(score_request, val) not in (None, {}, [], (), ''):
                 args[val] = getattr(score_request, val)
-        context['has'] = list_par
+        context['has'] = score_request.request.keys()
         return {'score': _get_score(**args)}, OK
 
 
 def clients_interests_request(store, request, context):
     interest_request = ClientsInterestsRequest(request)
+    interest_request.validated_argument()
     if interest_request.dict_err_type_value:
         return interest_request.dict_err_type_value, INVALID_REQUEST
     list_par = interest_request.list_not_null_fields
@@ -255,7 +261,7 @@ def clients_interests_request(store, request, context):
          context["nclients"] = col_clients
     else:
         interest_request.dict_err_type_value['client_ids'] = \
-            ValueError('"client_ids" should not be dusty ').args[0]
+            ValidationError('"client_ids" should not be dusty ').args[0]
         return interest_request.dict_err_type_value, INVALID_REQUEST
     return answer_get_interests, OK
 
@@ -267,6 +273,7 @@ def method_handler(request, ctx, store):
         "clients_interests": clients_interests_request
     }
     request_body = MethodRequest(request['body'])
+    request_body.validated_argument()
     if request_body.dict_err_type_value:
         return request_body.dict_err_type_value, INVALID_REQUEST
     if check_auth(request_body):
