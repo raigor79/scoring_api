@@ -1,6 +1,6 @@
 import unittest
 import store
-import time
+from fakeredis import FakeRedis
 import unittest.mock as mock
 from libtools import cases
 
@@ -9,51 +9,67 @@ class TestStore(unittest.TestCase):
 
     def setUp(self) -> None:
 
-        @cases([{'i:1': '1'}, {'i:2': 'age'}, {'i:3': 'tv'}])
+        arguments = {'i:1': '1', 'i:2': 'age', 'i:3': 'tv'}
+
         def filling(arguments):
             for key in arguments.keys():
                 self.storage.cache_set(key, arguments[key], expire=1)
 
+
         self.attempt_request = 4
         self.cache_size = 2
-        self.storage_redis = store.WorksRedis()
+        self.storage_redis = FakeRedis()
         self.storage = store.Store(self.storage_redis,
                                    attempt_request=self.attempt_request,
                                    cache_size=self.cache_size)
-        filling()
+        filling(arguments)
 
-    def test_connection_error(self):
-        self.storage_redis.server.get = mock.MagicMock(side_effect=ConnectionError)
-        self.storage_redis.server.set = mock.MagicMock(side_effect=ConnectionError)
+    def test_connection_error_cache_set(self):
+        self.storage_redis.set = mock.MagicMock(side_effect=ConnectionError)
         self.assertEqual(self.storage.cache_set('key', 'value', 60), None)
+        self.assertEqual(self.storage.store.set.call_count, self.attempt_request)
+
+    def test_connection_error_cache_get(self):
+        self.storage_redis.get = mock.MagicMock(side_effect=ConnectionError)
         self.assertEqual(self.storage.cache_get('key'), None)
-        self.assertEqual(self.storage.store.server.get.call_count, self.attempt_request)
-        self.assertEqual(self.storage.store.server.set.call_count, self.attempt_request)
+        self.assertEqual(self.storage.store.get.call_count, self.attempt_request)
+
+    def test_connection_error_cahe_get(self):
+        self.storage_redis.get = mock.MagicMock(side_effect=ConnectionError)
         with self.assertRaises(ConnectionError):
             self.storage.get('key')
-        self.assertEqual(self.storage.store.server.get.call_count, self.attempt_request * 2)
+        self.assertEqual(self.storage.store.get.call_count, self.attempt_request)
 
     @cases([{'i1': 1}, {'i2': ["cars", "pets"]}, {'i3': '1234'}])
     @mock.patch.object(store.redis.Redis, 'get')
-    def test_mocked_store_cache_get_and_get(self, argument, mocked_get):
+    def test_mocked_store_cache_get(self, argument, mocked_get):
         key = list(argument.keys())[0]
         mocked_get.return_value = argument[key]
         self.assertEqual(self.storage.cache_get(key), argument[key])
         mocked_get.assert_called_once_with(key)
+
+    @cases([{'i1': 1}, {'i2': ["cars", "pets"]}, {'i3': '1234'}])
+    @mock.patch.object(store.redis.Redis, 'get')
+    def test_mocked_store_get(self, argument, mocked_get):
+        key = list(argument.keys())[0]
+        mocked_get.return_value = argument[key]
         self.assertEqual(self.storage.get(key), argument[key])
         mocked_get.assert_called_with(key)
 
+    def fake_sleep(self, value):
+        for i in range(1, value+1):
+            self.storage_redis.unlink('i:%s' % i)
+
     def test_cache_note_false(self):
-        self.assertEqual(self.storage.get('i:1'), '1')
-        time.sleep(1)
+        self.assertEqual(self.storage.get('i:1'), b'1')
+        self.fake_sleep(1)
         self.assertEqual(self.storage.get('i:1'), None)
 
     def test_cache_note_true(self):
-        self.assertEqual(self.storage.cache_get('i:1'), '1')
-        time.sleep(1.1)
-        self.assertEqual(self.storage.cache_get('i:3'), None)
-        self.assertEqual(self.storage.cache_get('i:2'), None)
-        self.assertEqual(self.storage.cache_get('i:1'), '1')
+        self.assertEqual(self.storage.cache_get('i:1'), b'1')
+        self.fake_sleep(1)
+        self.assertEqual(self.storage.cache_get('i:1'), b'1')
+
 
 class TestWorksRedis(unittest.TestCase):
 

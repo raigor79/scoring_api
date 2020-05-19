@@ -8,7 +8,7 @@ class TestField(unittest.TestCase):
     @cases([None, [], {}, '', (),])
     def test_field_empty(self, string):
         field = api.Field(required=True, nullable=False)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(api.ValidationError):
             field.valid_required_nullable(string)
 
     @cases([1, 'qwer'])
@@ -26,7 +26,7 @@ class TestCharField(unittest.TestCase):
         with self.assertRaises(api.ValidationError):
             field_char.valid_field(string)
 
-    @cases(['123445', 'qwer'])
+    @cases(['123445', 'qwer', '@#$%^&&*(!)?/', 'фыва'])
     def test_charfield_request(self, string):
         field = api.CharField(required=True, nullable=True)
         field._value = string
@@ -51,13 +51,13 @@ class TestArgumentsField(unittest.TestCase):
 
 class TestEmailField(unittest.TestCase):
 
-    @cases(['mailmail.ru'])
+    @cases(['mailmail.ru@', 'mail.ru', '@mail.ru', 'mail@mail@ru', 'mail@', '@', 'mail.mail@mail.ruru'])
     def test_email_field_typeerror(self, string):
         self.field_email = api.EmailField(required=True, nullable=True)
         with self.assertRaises(api.ValidationError):
             self.field_email.valid_field(string)
 
-    @cases(['mail@mail.ru', '@'])
+    @cases(['mail@mail.ru', 'mail.mail@mail.org',])
     def est_email_field_request(self, string):
         self.field_email._value = string
         self.assertEqual(string, self.field_email._value)
@@ -65,7 +65,8 @@ class TestEmailField(unittest.TestCase):
 
 class TestPhoneField(unittest.TestCase):
 
-    @cases(['7234567890', '82345678901', '790675423121'])
+    @cases(['7234567890', '82345678901', '790675423121',
+            '+71231231212', '-71231231212', '+7123123121' ])
     def test_phone_field_typeerror(self, string):
         self.field_phone = api.PhoneField(required=True, nullable=True)
         with self.assertRaises(api.ValidationError):
@@ -79,13 +80,16 @@ class TestPhoneField(unittest.TestCase):
 
 class TestDateField(unittest.TestCase):
 
-    @cases(['xxx', '01.01.194', '01.01.19422'])
+    @cases(['abc', 'abcd', 'abcde', 'abcdef', 11011999,
+            '1999.24.12', '1999.12.24', '12.1999.24', '24.1999.12'
+            'dd.mm.YYYY', 'MM.dd.YYYY', 'YYYY.mm.dd', 'dd.mm.YY',
+            '01.12.20001', '001.12.2001', '01.001.2001', '01.12.201'])
     def test_date_field_typeerror(self, string):
         self.field_date = api.DateField(required=True, nullable=True)
         with self.assertRaises(api.ValidationError):
             self.field_date.valid_field(string)
 
-    @cases(['01.01.1999'])
+    @cases(['01.01.1999', '01.01.1950', '01.01.2050'])
     def est_dete_field_request(self, string):
         self.field_date._value = string
         self.assertEqual(string, self.field_date._value)
@@ -93,16 +97,20 @@ class TestDateField(unittest.TestCase):
 
 class TestBirthDayField(unittest.TestCase):
 
-    @cases(['xxx', '01.01.1950', 1011950, 'dd.mm.YYYY'])
+    @cases(['abc', 'abcd', 'abcde', 'abcdef',
+            11011999,
+            '1999.24.12', '1999.12.24', '12.1999.24', '24.1999.12'
+            'dd.mm.YYYY', 'MM.dd.YYYY', 'YYYY.mm.dd', 'dd.mm.YY',
+            '01.12.20001', '001.12.2001', '01.001.2001'])
     def test_date_field_typeerror(self, string):
         self.field_birthday = api.BirthDayField(required=True, nullable=True)
         with self.assertRaises(api.ValidationError):
             self.field_birthday.valid_field(string)
 
-    @cases(['01.01.2029'])
+    @cases(['01.01.2029', '01.01.1950'])
     def test_date_field_valueerror(self, string):
         self.field_birthday = api.BirthDayField(required=True, nullable=True)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(api.ValidationError):
             self.field_birthday.valid_field(string)
 
     @cases(['01.01.1999'])

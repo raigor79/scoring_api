@@ -9,6 +9,7 @@ import uuid
 from scoring import get_score, get_interests
 from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import re
 import store
 
 SALT = "Otus"
@@ -93,7 +94,8 @@ class ArgumentsField(Field):
 class EmailField(CharField):
     def valid_field(self, value):
         super().valid_field(value)
-        if '@' not in value:
+        if not re.match(r"^([^@]+)@([^@\.]+)\.([^@.]{2,3}$)", value):
+        #if '@' not in value:
             raise ValidationError('This value must be a email')
 
 
@@ -175,6 +177,7 @@ class Request(metaclass=MetaClassRequest):
                             raise ValidationError(err.args[0])
                 except ValidationError as err:
                     self.dict_err_type_value[name_field] = err.args[0]
+        return
 
 
 class ClientsInterestsRequest(Request):
