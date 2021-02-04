@@ -47,11 +47,11 @@ def _get_interests(store=None, cid=None):
     return get_interests(store, cid)
 
 
-class ValidationError(Exception):
-    pass
+class ValidationError(Exception):...
 
 
 class Field(object):
+
     def __get__(self, instance, owner):
         return instance.__dict__[self.name]
 
